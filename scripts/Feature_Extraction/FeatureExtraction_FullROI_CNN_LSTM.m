@@ -1,0 +1,107 @@
+clear;
+close all;
+
+%% Load Processed Data
+load('Data\Processed_Data\processedDataStruct_CNN_LSTM.mat', 'processedDataStruct');
+
+% Define the range indices to be analyzed
+rangeIndicesForAnalysis = 30:435;  % MATLAB indexing starts from 1
+
+% Define the number of Doppler bins around the ego Doppler bin to extract
+dopplerROIWidth = 10;  % Number of bins to include on each side of the ego Doppler bin
+
+% Define sequence length
+sequenceLength = 10;
+
+% Initialize structures to store ROIs and labels for all road types
+allROIs = struct();
+allLabels = struct();
+
+% Define the broader categories
+categories = {'dry', 'wet', 'snow'};
+
+% Iterate over each road type in the processed data
+fields = fieldnames(processedDataStruct);
+for iField = 1:length(fields)
+    classLabel = fields{iField};
+    processedData = processedDataStruct.(classLabel);
+
+    % Determine the broader category
+    if startsWith(classLabel, 'dry')
+        category = 'dry';
+    elseif startsWith(classLabel, 'wet')
+        category = 'wet';
+    elseif startsWith(classLabel, 'sno')
+        category = 'snow';
+    else
+        warning('Unknown category for %s. Skipping...', classLabel);
+        continue;
+    end
+
+    % Initialize storage for ROIs for the current road type
+    numFiles = length(processedData);
+    roisForRoadType = {};
+
+    for iFile = 1:numFiles
+        if ~isempty(processedData(iFile).ProcessedData)
+            adcDataIn = processedData(iFile).ProcessedData;
+            rdmOutput = adcDataIn.Data;  % Load the range-Doppler map data
+            [nRangeBins, nDopplerBins, ~, ~] = size(rdmOutput);
+            vehSpeed_mps = adcDataIn.VehSpeed_mps;  % Extract vehicle speed
+            
+            if ~isempty(rdmOutput)
+                % Calculate ego Doppler bin based on vehicle speed
+                egoDopplerBin = 64 + floor(vehSpeed_mps / 0.12);
+                egoDopplerBin = mod(egoDopplerBin - 1, nDopplerBins) + 1;  % Ensure it stays within bounds
+    
+                % Determine the Doppler bins to extract (ROI)
+                dopplerStart = egoDopplerBin - dopplerROIWidth;
+                dopplerEnd = egoDopplerBin + dopplerROIWidth;
+                
+                % Handle wrapping of Doppler bins around the edges
+                if dopplerStart < 1
+                    dopplerIndicesForAnalysis = [dopplerStart + nDopplerBins : nDopplerBins, 1 : dopplerEnd];
+                elseif dopplerEnd > nDopplerBins
+                    dopplerIndicesForAnalysis = [dopplerStart : nDopplerBins, 1 : dopplerEnd - nDopplerBins];
+                else
+                    dopplerIndicesForAnalysis = dopplerStart:dopplerEnd;
+                end
+    
+                for txIdx = 1:4
+                    for rxIdx = 1:4
+                        % Extract the ROI as 2D data
+                        roi = abs(rdmOutput(rangeIndicesForAnalysis, dopplerIndicesForAnalysis, rxIdx, txIdx));
+    
+                        % Store the ROI data
+                        roisForRoadType{end+1} = roi;  
+                    end
+                end
+            end
+        end
+    end
+    
+    % Create sequences of ROIs
+    numROIs = length(roisForRoadType);
+    numSequences = floor(numROIs / sequenceLength);
+    
+    for i = 1:numSequences
+        startIdx = (i-1)*sequenceLength + 1;
+        endIdx = i*sequenceLength;
+        sequence = roisForRoadType(startIdx:endIdx);
+        
+        % Store the sequence in the appropriate category
+        if ~isfield(allROIs, category)
+            allROIs.(category) = {};
+            allLabels.(category) = {};
+        end
+        allROIs.(category){end+1} = sequence;
+        allLabels.(category){end+1} = category;
+    end
+    
+    fprintf('Processed road type: %s\n', classLabel);
+end
+
+% Save combined ROIs and labels
+save('Data\Feature_Vector_Data\full_roi_doppler_CNN_LSTM_sequential.mat', 'allROIs', 'allLabels');
+
+fprintf('ROI extraction complete. Data saved to full_roi_doppler_CNN_LSTM_sequential.mat\n');

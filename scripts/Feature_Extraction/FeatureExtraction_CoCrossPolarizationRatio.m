@@ -1,0 +1,154 @@
+clear;
+close all;
+
+%% Load Processed Data
+load('Data\Processed_Data\processedDataStruct.mat', 'processedDataStruct');
+
+% Define the range indices to be analyzed (Range Index 10-40, all Doppler bins)
+rangeIndicesForAnalysis = 10:40;
+
+% Initialize cell arrays to store features and labels for all road types
+allFeatures = {};
+allLabels = {};
+
+
+
+% Note
+% ch1  = HV, TX1RX1 H1V1 ## Antenna 1 
+% ch2  = VV, TX2RX1 V2V1 ## Antenna 1 
+% ch3  = HV, TX3RX1 H3V1 ## Antenna 1&2 
+% ch4  = VV, TX4RX1 V4V1 ## Antenna 1&2 
+% ch5  = HH, TX1RX2 H1H2 ## Antenna 1 
+% ch6  = VH, TX2RX2 V2H2 ## Antenna 1 
+% ch7  = HH, TX3RX2 H3H2 ## Antenna 1&2 
+% ch8  = VH, TX4RX2 V4H2 ## Antenna 1&2
+
+
+
+% ch9  = HV, TX1RX3 H1V3 ## Antenna 1&2 
+% ch10 = VV, TX2RX3 V2V3 ## Antenna 1&2 
+% ch11 = HV, TX3RX3 H3V3 ## Antenna 2 
+% ch12 = VV, TX4RX3 V4V3 ## Antenna 2 
+% ch13 = HH, TX1RX4 H1H4 ## Antenna 1&2 
+% ch14 = VH, TX2RX4 V2H4 ## Antenna 1&2 
+% ch15 = HH, TX3RX4 H3H4 ## Antenna 2 
+% ch16 = VH, TX4RX4 V4H4 ## Antenna 2
+
+
+% Channels to extract features from (corresponding to Antenna 1)
+% ch5 = HH, ch2 = VV, ch6 = VH, ch1 = HV
+antennaChannels = [5, 2, 6, 1];
+
+% Iterate over each road type in the processed data
+fields = fieldnames(processedDataStruct);
+for iField = 1:length(fields)
+    classLabel = fields{iField};
+    processedData = processedDataStruct.(classLabel);
+
+    % Initialize feature array for current road type
+    numFiles = length(processedData);
+    spectralFeatures = [];
+
+    for iFile = 1:numFiles
+        adcDataIn = processedData(iFile).ProcessedData;
+        rdmOutput = adcDataIn.Data;  % Load the range-Doppler map data
+        [nRangeBins, nDopplerBins, nChannels] = size(rdmOutput);
+        vehSpeed_mps = adcDataIn.VehSpeed_mps;  % Extract vehicle speed
+
+        if ~isempty(rdmOutput)
+            % Extract Range-Doppler subregion for Antenna 1 (HH, VV, VH, HV)
+            rdMap_HH = abs(rdmOutput(rangeIndicesForAnalysis, :, antennaChannels(1)));
+            rdMap_VV = abs(rdmOutput(rangeIndicesForAnalysis, :, antennaChannels(2)));
+            rdMap_VH = abs(rdmOutput(rangeIndicesForAnalysis, :, antennaChannels(3)));
+            rdMap_HV = abs(rdmOutput(rangeIndicesForAnalysis, :, antennaChannels(4)));
+
+            % % Compute the mean values for each channel within the ROI
+            mean_HH = mean(rdMap_HH(:));
+            mean_VV = mean(rdMap_VV(:));
+            mean_VH = mean(rdMap_VH(:));
+            mean_HV = mean(rdMap_HV(:));
+            
+
+            % Compute the feature (HH + VV) / (VH + HV)
+            featureValue = (mean_HH + mean_VV) / (mean_VH + mean_HV);
+
+
+
+
+
+            % Append the feature to the feature array for this file
+            spectralFeatures = [spectralFeatures; featureValue];
+        end
+    end
+
+    % Store features and labels for the current road type
+    allFeatures = [allFeatures; spectralFeatures];
+    allLabels = [allLabels; repmat({classLabel}, size(spectralFeatures, 1), 1)];
+
+    fprintf('Processed road type: %s\n', classLabel);
+end
+
+% Combine all features and labels into matrices
+combinedFeatures = cell2mat(allFeatures);
+
+% Convert labels to categorical array
+combinedLabels = categorical(allLabels);
+
+% Shuffle the data
+rng(0); % For reproducibility
+shuffledIndices = randperm(size(combinedFeatures, 1));
+combinedFeatures = combinedFeatures(shuffledIndices, :);
+combinedLabels = combinedLabels(shuffledIndices, :);
+
+
+
+
+
+% Convert combinedLabels from categorical to cell array for easier plotting
+combinedLabels = cellstr(combinedLabels);
+
+% Define unique class labels
+classLabels = unique(combinedLabels);
+
+% Initialize a figure
+figure;
+hold on;
+
+% Plot each class with a different marker and color
+markers = {'o', 's', '^', 'd', 'x'};  % Different marker types for variety
+colors = lines(length(classLabels));  % Use MATLAB's default color set
+
+for i = 1:length(classLabels)
+    % Find the indices of the current class label
+    classIndices = strcmp(combinedLabels, classLabels{i});
+
+    % Scatter plot for the current class
+    scatter(find(classIndices), combinedFeatures(classIndices), 50, colors(i, :), markers{i}, 'filled', 'DisplayName', classLabels{i});
+end
+
+% Add labels and legend
+xlabel('Sample Index');
+ylabel('Feature Value (HH + VV) / (VH + HV)');
+title('Scatter Plot of Feature Values for Each Road Type');
+legend('show', 'Location', 'best');
+grid on;
+hold off;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%% Save clustered features and labels
+% save('Data\Feature_Vector_Data\Clustered_CoCrossPolRatio.mat', 'combinedFeatures', 'idx', 'C');
+
+fprintf('Feature extraction and clustering complete. Data saved to Clustered_CoCrossPolRatio.mat\n');

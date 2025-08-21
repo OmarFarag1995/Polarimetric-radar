@@ -1,0 +1,225 @@
+clear;
+close all;
+
+%% Load Processed Data
+load('..\Data\Processed_Data\processedDataStruct.mat', 'processedDataStruct');
+
+% Define the range indices to be analyzed (use the entire range)
+rangeIndicesForAnalysis = 12:30;  % MATLAB indexing starts from 1
+
+% Initialize cell arrays to store features and labels for all road types
+allFeatures = {};
+allLabels = {};
+
+
+
+% Note
+% ch1  = HV, TX1RX1 H1V1 ## Antenna 1 
+% ch2  = VV, TX2RX1 V2V1 ## Antenna 1 
+% ch3  = HV, TX3RX1 H3V1 ## Antenna 1&2 
+% ch4  = VV, TX4RX1 V4V1 ## Antenna 1&2 
+% ch5  = HH, TX1RX2 H1H2 ## Antenna 1 
+% ch6  = VH, TX2RX2 V2H2 ## Antenna 1 
+% ch7  = HH, TX3RX2 H3H2 ## Antenna 1&2 
+% ch8  = VH, TX4RX2 V4H2 ## Antenna 1&2
+
+
+
+% ch9  = HV, TX1RX3 H1V3 ## Antenna 1&2 
+% ch10 = VV, TX2RX3 V2V3 ## Antenna 1&2 
+% ch11 = HV, TX3RX3 H3V3 ## Antenna 2 
+% ch12 = VV, TX4RX3 V4V3 ## Antenna 2 
+% ch13 = HH, TX1RX4 H1H4 ## Antenna 1&2 
+% ch14 = VH, TX2RX4 V2H4 ## Antenna 1&2 
+% ch15 = HH, TX3RX4 H3H4 ## Antenna 2 
+% ch16 = VH, TX4RX4 V4H4 ## Antenna 2
+
+
+% Channels to extract features from
+antennaChannels = [1, 2, 5, 6];
+
+% Feature extraction flags
+extractCentroid = true;
+extractSpread = true;
+extractFlatness = true;
+extractSkewness = true;
+extractKurtosis = true;
+extractMax = true;
+extractBegin = false;
+extractEnd = false;
+extractRollOff = false;
+extractEntropy = false;
+extractContrast = false;
+extractBandRatio = false;
+extractRMS = false;
+extractZeroCrossings = false;
+extractPeakFreq = false;
+extractTotalEnergy = false;
+
+% Iterate over each road type in the processed data
+fields = fieldnames(processedDataStruct);
+for iField = 1:length(fields)
+    classLabel = fields{iField};
+    processedData = processedDataStruct.(classLabel);
+
+    % Initialize feature array for current road type
+    numFiles = length(processedData);
+    spectralFeatures = [];
+
+    for iFile = 1:numFiles
+        adcDataIn = processedData(iFile).ProcessedData;
+        rdmOutput = adcDataIn.Data;  % Load the range-Doppler map data
+        [nRangeBins, nDopplerBins, nChannels] = size(rdmOutput);
+        vehSpeed_mps = adcDataIn.VehSpeed_mps;  % Extract vehicle speed
+        
+        if ~isempty(rdmOutput)
+            % Calculate ego Doppler bin based on vehicle speed
+            egoDopplerBin = 64 + floor(vehSpeed_mps / 0.12);
+            egoDopplerBin = mod(egoDopplerBin - 1, nDopplerBins) + 1;  % Ensure it stays within bounds
+
+            % Extract features for channels corresponding to Antenna 1
+            for ch = antennaChannels
+                % Extract the Doppler spectrum at the ego Doppler bin
+                dopplerSpectrum = abs(rdmOutput(rangeIndicesForAnalysis, egoDopplerBin, ch));
+
+                % Spectral Features Extraction
+                freqs = (1:length(dopplerSpectrum))'; % Frequency vector
+
+                features = []; % Initialize the features vector
+
+                if extractCentroid
+                    % 1. Spectral Centroid
+                    spectralCentroid = sum(freqs .* dopplerSpectrum) / sum(dopplerSpectrum);
+                    features = [features, spectralCentroid];
+                end
+
+                if extractSpread
+                    % 2. Spectral Spread
+                    spectralSpread = sqrt(sum(((freqs - spectralCentroid).^2) .* dopplerSpectrum) / sum(dopplerSpectrum));
+                    features = [features, spectralSpread];
+                end
+
+                if extractFlatness
+                    % 3. Spectral Flatness
+                    geometricMean = exp(mean(log(dopplerSpectrum + eps)));
+                    arithmeticMean = mean(dopplerSpectrum);
+                    spectralFlatness = geometricMean / arithmeticMean;
+                    features = [features, spectralFlatness];
+                end
+
+                if extractSkewness
+                    % 4. Spectral Skewness
+                    spectralSkewness = sum(((freqs - spectralCentroid).^3) .* dopplerSpectrum) / ...
+                        ((sum(((freqs - spectralCentroid).^2) .* dopplerSpectrum))^(3/2));
+                    features = [features, spectralSkewness];
+                end
+
+                if extractKurtosis
+                    % 5. Spectral Kurtosis
+                    spectralKurtosis = sum(((freqs - spectralCentroid).^4) .* dopplerSpectrum) / ...
+                        ((sum(((freqs - spectralCentroid).^2) .* dopplerSpectrum))^2);
+                    features = [features, spectralKurtosis];
+                end
+
+                if extractMax
+                    % 6. Maximum Value of the Spectrum
+                    maxSpectrum = max(dopplerSpectrum);
+                    features = [features, maxSpectrum];
+                end
+
+                if extractBegin
+                    % 7. Beginning Value of the Spectrum
+                    beginSpectrum = dopplerSpectrum(1);
+                    features = [features, beginSpectrum];
+                end
+
+                if extractEnd
+                    % 8. End Value of the Spectrum
+                    endSpectrum = dopplerSpectrum(end);
+                    features = [features, endSpectrum];
+                end
+
+                if extractRollOff
+                    % 9. Spectral Roll-off
+                    rolloffThreshold = 0.85 * sum(dopplerSpectrum);
+                    cumulativeSum = cumsum(dopplerSpectrum);
+                    spectralRolloff = find(cumulativeSum >= rolloffThreshold, 1);
+                    features = [features, spectralRolloff];
+                end
+
+                if extractEntropy
+                    % 10. Spectral Entropy
+                    probDoppler = dopplerSpectrum / sum(dopplerSpectrum);
+                    spectralEntropy = -sum(probDoppler .* log2(probDoppler + eps));
+                    features = [features, spectralEntropy];
+                end
+
+                if extractContrast
+                    % 11. Spectral Contrast
+                    spectralContrast = max(dopplerSpectrum) - min(dopplerSpectrum);
+                    features = [features, spectralContrast];
+                end
+
+                if extractBandRatio
+                    % 12. Band Energy Ratio
+                    bandSplit = floor(length(dopplerSpectrum) / 2);
+                    lowBandEnergy = sum(dopplerSpectrum(1:bandSplit));
+                    highBandEnergy = sum(dopplerSpectrum(bandSplit+1:end));
+                    bandEnergyRatio = lowBandEnergy / highBandEnergy;
+                    features = [features, bandEnergyRatio];
+                end
+
+                if extractRMS
+                    % 13. RMS Amplitude
+                    rmsAmplitude = sqrt(mean(dopplerSpectrum.^2));
+                    features = [features, rmsAmplitude];
+                end
+
+                if extractZeroCrossings
+                    % 14. Zero Crossing Rate
+                    zeroCrossings = sum(diff(dopplerSpectrum > mean(dopplerSpectrum)) ~= 0);
+                    features = [features, zeroCrossings];
+                end
+
+                if extractPeakFreq
+                    % 15. Peak Frequency
+                    [~, peakIndex] = max(dopplerSpectrum);
+                    peakFrequency = freqs(peakIndex);
+                    features = [features, peakFrequency];
+                end
+
+                if extractTotalEnergy
+                    % 16. Total Energy
+                    totalEnergy = sum(dopplerSpectrum.^2);
+                    features = [features, totalEnergy];
+                end
+
+                % Append the features for this channel
+                spectralFeatures = [spectralFeatures; features];
+            end
+        end
+    end
+    
+    % Store features and labels for the current road type
+    allFeatures = [allFeatures; spectralFeatures];
+    allLabels = [allLabels; repmat({classLabel}, size(spectralFeatures, 1), 1)];
+    
+    fprintf('Processed road type: %s\n', classLabel);
+end
+
+% Combine all features and labels into matrices
+combinedFeatures = cell2mat(allFeatures);
+
+% Convert labels to categorical array
+combinedLabels = categorical(allLabels);
+
+% Shuffle the data
+rng(0); % For reproducibility
+shuffledIndices = randperm(size(combinedFeatures, 1));
+combinedFeatures = combinedFeatures(shuffledIndices, :);
+combinedLabels = combinedLabels(shuffledIndices, :);
+
+% Save combined features and labels
+save('..\Data\Feature_Vector_Data\ego_doppler_spectral_features.mat', 'combinedFeatures', 'combinedLabels');
+
+fprintf('Feature extraction complete. Data saved to ego_doppler_spectral_features.mat\n');

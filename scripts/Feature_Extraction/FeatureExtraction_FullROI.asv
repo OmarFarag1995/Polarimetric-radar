@@ -1,0 +1,68 @@
+clear;
+close all;
+
+%% Load Processed Data
+load('Data\Processed_Data\processedDataStruct.mat', 'processedDataStruct');
+
+% Define the range indices to be analyzed (10:435)
+rangeIndicesForAnalysis = 10:435;  % MATLAB indexing starts from 1
+
+% Define the number of Doppler bins around the ego Doppler bin to extract
+dopplerROIWidth = 5;  % Number of bins to include on each side of the ego Doppler bin
+
+% Initialize cell arrays to store ROIs and labels for all road types
+allROIs = {};
+allLabels = {};
+
+% Specify the channels to extract the ROI from (e.g., [1, 2] for HV and VV channels from Antenna 1)
+channelsToExtract = [1, 2, 5, 6];
+
+% Iterate over each road type in the processed data
+fields = fieldnames(processedDataStruct);
+for iField = 1:length(fields)
+    classLabel = fields{iField};
+    processedData = processedDataStruct.(classLabel);
+
+    % Initialize storage for ROIs for the current road type
+    numFiles = length(processedData);
+    roisForRoadType = {};
+
+    for iFile = 1:numFiles
+        adcDataIn = processedData(iFile).ProcessedData;
+        rdmOutput = adcDataIn.Data;  % Load the range-Doppler map data
+        [nRangeBins, nDopplerBins, ~] = size(rdmOutput);
+        vehSpeed_mps = adcDataIn.VehSpeed_mps;  % Extract vehicle speed
+        
+        if ~isempty(rdmOutput)
+            % Calculate ego Doppler bin based on vehicle speed
+            egoDopplerBin = 64 + floor(vehSpeed_mps / 0.12);
+            egoDopplerBin = mod(egoDopplerBin - 1, nDopplerBins) + 1;  % Ensure it stays within bounds
+
+            % Determine the Doppler bins to extract (ROI)
+            dopplerStart = max(1, egoDopplerBin - dopplerROIWidth);
+            dopplerEnd = min(nDopplerBins, egoDopplerBin + dopplerROIWidth);
+            dopplerIndicesForAnalysis = dopplerStart:dopplerEnd;
+
+            % Extract ROI for the specified channels
+            for ch = channelsToExtract
+                % Extract the ROI as 2D data
+                roi = abs(rdmOutput(rangeIndicesForAnalysis, dopplerIndicesForAnalysis, ch));
+
+                % Store the ROI data
+                roisForRoadType{end+1} = roi;  
+            end
+        end
+    end
+    
+    % Store ROIs and labels for the current road type
+    allROIs = [allROIs; roisForRoadType'];
+    allLabels = [allLabels; repmat({classLabel}, length(roisForRoadType), 1)];
+    
+    fprintf('Processed road type: %s\n', classLabel);
+end
+
+
+% Save combined ROIs and labels
+save('Data\Feature_Vector_Data\full_roi_doppler.mat', 'allROIs', 'allLabels');
+
+fprintf('ROI extraction complete. Data saved to roi_doppler_features.mat\n');

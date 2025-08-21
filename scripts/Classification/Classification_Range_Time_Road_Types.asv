@@ -1,0 +1,88 @@
+%% Road Surface Type Classification Using LSTM (Sequence-to-Sequence)
+clear; close all; clc;
+
+%% Load and Prepare Data
+load('Data\Processed_Data\Range_Time_Clean_LOOK_A\processedDataStruct_RangeTime_Road_Types_LOOK_A.mat',...
+     'processedDataStruct');
+
+% Define known road types
+roadTypes = ["Asphalt", "CobbleStone", "Gravel", "PavementBlocks"];
+
+% Initialize data and labels
+X = {};           % cell array of sequences (each is [features x timesteps])
+labels = {};      % string class per sequence
+
+fn = fieldnames(processedDataStruct);
+for k = 1:numel(fn)
+    dsName = fn{k};
+    signal = processedDataStruct.(dsName).meanRangeBinsSubset;
+
+    % Extract road type label (e.g. 'Asphalt' from 'Asphalt_Tunnel_1')
+    parts = split(dsName, '_');
+    label = parts{1};
+
+    % Add to dataset
+    X{end+1,1} = signal;
+    labels{end+1,1} = label;
+end
+
+% Convert labels to categorical
+Y = categorical(labels);
+
+%% Split into Training and Testing Sets (Stratified)
+cv = cvpartition(Y, 'HoldOut', 0.3, 'Stratify', true);
+XTrain = X(cv.training);
+YTrain = Y(cv.training);
+XTest  = X(cv.test);
+YTest  = Y(cv.test);
+
+%% Convert Labels to Per-Timestep Sequence Format
+e% Convert categorical labels to cell array of char
+YTrainCell = cellstr(YTrain);
+YTestCell  = cellstr(YTest);
+
+% Expand label across time steps
+YTrainSeq = cell(size(XTrain));
+for i = 1:numel(XTrain)
+    nSteps = size(XTrain{i}, 2);
+    YTrainSeq{i} = repmat(YTrainCell{i}, 1, nSteps);
+end
+
+YTestSeq = cell(size(XTest));
+for i = 1:numel(XTest)
+    nSteps = size(XTest{i}, 2);
+    YTestSeq{i} = repmat(YTestCell{i}, 1, nSteps);
+end
+
+%% Define LSTM Network Architecture
+inputSize     = size(XTrain{1}, 1);
+numHidden     = 50;
+numClasses    = numel(categories(Y));
+
+layers = [ ...
+    sequenceInputLayer(inputSize)
+    lstmLayer(numHidden, 'OutputMode', 'sequence')
+    fullyConnectedLayer(numClasses)
+    softmaxLayer
+    classificationLayer];
+
+%% Specify Training Options
+options = trainingOptions('adam', ...
+    'MaxEpochs', 100, ...
+    'MiniBatchSize', 16, ...
+    'Shuffle', 'every-epoch', ...
+    'Verbose', 0, ...
+    'Plots', 'training-progress');
+
+%% Train the Network
+net = trainNetwork(XTrain, YTrainSeq, layers, options);
+
+%% Evaluate the Network
+accuracyPerSequence = zeros(numel(XTest), 1);
+for i = 1:numel(XTest)
+    YPred = classify(net, XTest{i});
+    accuracyPerSequence(i) = mean(YPred == YTestSeq{i});
+end
+
+overallAccuracy = mean(accuracyPerSequence);
+fprintf('Mean Per-Sequence Accuracy: %.2f %%\n', 100 * overallAccuracy);
